@@ -1,0 +1,60 @@
+x-app: &app
+  build: .
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  environment:
+    DATABASE_URL: postgres://wager:wager@postgres:5432/wager
+    SQS_ENDPOINT: http://sqs:4566
+    PORT: 3000
+  depends_on:
+    setup:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:e5d2edd28b1f8d40a0a6c0c9cdc545b19b56a0d5d88f94bc11a97d970d4700d0
+    command: ["postgres", "-c", "log_statement=none", "-c", "log_min_error_statement=panic",
+      "-c", "log_parameter_max_length=0", "-c", "log_parameter_max_length_on_error=0",
+      "-c", "log_error_verbosity=terse"]
+    environment:
+      POSTGRES_DB: wager
+      POSTGRES_USER: wager
+      POSTGRES_PASSWORD: wager
+    ports: ["127.0.0.1:${PG_HOST_PORT:-54328}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "wager", "-d", "wager"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  sqs:
+    image: ministackorg/ministack@sha256:a415d58e257931ddfd2678bfba915d6dea9508c3103df74fa90efdd6535c035c
+    init: true
+    stop_signal: SIGINT
+    ports: ["127.0.0.1:${SQS_HOST_PORT:-4566}:4566"]
+    environment:
+      PERSIST_STATE: "1"
+    volumes: [sqsdata:/tmp/ministack-state]
+
+  setup:
+    <<: *app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sqs:
+        condition: service_started
+    command: ["bun", "src/setup.ts"]
+
+  app:
+    <<: *app
+    restart: on-failure
+    deploy:
+      replicas: 3
+    ports:
+      - "127.0.0.1::3000"
+    stop_grace_period: 20s
+
+volumes:
+  pgdata:
+  sqsdata:
